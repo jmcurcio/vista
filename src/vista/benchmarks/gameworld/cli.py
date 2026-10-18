@@ -28,7 +28,7 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--games-root", type=Path, required=True)
     root.add_argument("--game")
     root.add_argument("--task")
-    add_backend_arguments(root, backends=("codex",))
+    add_backend_arguments(root, backends=("codex", "omlx"))
     root.add_argument("--model")
     root.add_argument("--effort")
     root.add_argument("--output", type=Path)

@@ -61,7 +61,7 @@ def parser() -> argparse.ArgumentParser:
         help="tracking48 (default): Maze, Connect the lines, Lines Observation; "
         "visual-tracking: the whole type (83); full: all 388",
     )
-    add_backend_arguments(root, backends=("codex",))
+    add_backend_arguments(root, backends=("codex", "omlx"))
     root.add_argument("--model")
     root.add_argument("--effort")
     root.add_argument("--passes", type=int, default=1, help="Answers per question")

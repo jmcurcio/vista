@@ -197,14 +197,15 @@ def validate_claude_runtime(
     oauth_token: str | None = None,
     provider: ClaudeCodeProvider = ANTHROPIC_PROVIDER,
     provider_credential: str | None = None,
+    expected_version: str = PINNED_CLAUDE_VERSION,
 ) -> Path:
     executable = (binary or default_claude_bin()).resolve()
     if not executable.is_file():
         raise FileNotFoundError(f"Claude Code binary not found at {executable}")
     version = claude_version(executable)
-    if version != PINNED_CLAUDE_VERSION:
+    if version != expected_version:
         raise RuntimeError(
-            f"Claude Code {PINNED_CLAUDE_VERSION} is required; found {version or 'unknown'}."
+            f"Claude Code {expected_version} is required; found {version or 'unknown'}."
         )
     if provider.native:
         token = (
@@ -278,6 +279,9 @@ def create_short_socket_dir(segment: int) -> Path:
 
 
 class ClaudeCodeRunner:
+    # The exact Claude Code version every segment must report.
+    claude_version_pin = PINNED_CLAUDE_VERSION
+
     def __init__(
         self,
         *,
@@ -448,6 +452,10 @@ class ClaudeCodeRunner:
             return claude_process_environment(self.oauth_token)
         return provider_process_environment(self.provider_environment)
 
+    def _process_cwd(self) -> Path:
+        # The docker client's cwd; the player itself runs in /workspace.
+        return self.visible_dir
+
     def _container_name(self, session_id: str) -> str | None:
         # Name containers for compatible providers so they can be removed
         # explicitly when the client process is terminated.
@@ -566,6 +574,7 @@ class ClaudeCodeRunner:
             oauth_token=self.oauth_token,
             provider=self.provider,
             provider_credential=self.provider_credential,
+            expected_version=self.claude_version_pin,
         )
         initial_images = tuple(initial_images)
         segment = self._next_segment()
@@ -651,7 +660,7 @@ class ClaudeCodeRunner:
             host.start()
             process = subprocess.Popen(
                 command,
-                cwd=self.visible_dir,
+                cwd=self._process_cwd(),
                 env=self._process_environment(),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -728,6 +737,7 @@ class ClaudeCodeRunner:
                 display_size=self.display_size,
                 allow_slash_commands=not disable_slash_commands,
                 tool_definitions=self._tool_definitions(),
+                expected_version=self.claude_version_pin,
             )
             if self.expected_model_id is not None:
                 actual_model = resolved_model_id_from_envelope(sanitized_init)
@@ -1386,6 +1396,7 @@ def validate_instruction_envelope(
     display_size: int,
     allow_slash_commands: bool = False,
     tool_definitions: list[dict[str, Any]] | None = None,
+    expected_version: str = PINNED_CLAUDE_VERSION,
 ) -> None:
     if not isinstance(envelope, dict):
         raise RuntimeError("Claude Code emitted no initialization envelope.")
@@ -1406,7 +1417,7 @@ def validate_instruction_envelope(
         raise RuntimeError("Claude runtime exposed unexpected slash_commands.")
     if envelope.get("permissionMode") != CLAUDE_PERMISSION_MODE:
         raise RuntimeError("Claude runtime used an unexpected permission mode.")
-    if envelope.get("claude_code_version") != PINNED_CLAUDE_VERSION:
+    if envelope.get("claude_code_version") != expected_version:
         raise RuntimeError("Claude runtime used an unexpected Claude Code version.")
     servers = envelope.get("mcp_servers")
     if not isinstance(servers, list) or len(servers) != 1:

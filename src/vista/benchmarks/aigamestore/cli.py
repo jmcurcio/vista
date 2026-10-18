@@ -35,7 +35,7 @@ def parser() -> argparse.ArgumentParser:
         type=Path,
         help="Serve local game copies (gameN/index.html) instead of aigamestore.org",
     )
-    add_backend_arguments(root, backends=("codex",))
+    add_backend_arguments(root, backends=("codex", "omlx"))
     root.add_argument("--model")
     root.add_argument("--effort")
     root.add_argument("--max-decisions", type=int, default=MAX_DECISIONS)

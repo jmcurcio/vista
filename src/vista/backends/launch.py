@@ -1,6 +1,7 @@
 """Shared command-line selection of a transport.
 
-`--backend` names what the benchmark CLIs launch: `codex` or `claude`.
+`--backend` names what the benchmark CLIs launch: `codex`, `claude`, or
+`omlx` (the claude transport as a host process, served by a local oMLX).
 """
 
 from __future__ import annotations
@@ -13,8 +14,8 @@ from typing import Any
 
 from vista.backends.preflight import check_transport
 
-BACKENDS = ("codex", "claude")
-TRANSPORTS = {"codex": "codex", "claude": "claude"}
+BACKENDS = ("codex", "claude", "omlx")
+TRANSPORTS = {"codex": "codex", "claude": "claude", "omlx": "claude"}
 
 
 def transport_for(backend: str) -> str:
@@ -41,6 +42,10 @@ def add_backend_arguments(
     parser.add_argument("--binary", type=Path)
     parser.add_argument("--ca-bundle", type=Path)
     parser.add_argument("--task-timeout", type=int)
+    if "omlx" in backends:
+        from vista.backends.omlx.runner import add_arguments
+
+        add_arguments(parser)
     if "claude" not in backends:
         return
     parser.add_argument("--claude-token-env", default="CLAUDE_CODE_OAUTH_TOKEN")
@@ -80,6 +85,8 @@ def prepare_backend(
     """
     backend = args.backend
     transport = transport_for(backend)
+    if backend == "omlx":
+        return _prepare_omlx(args, error)
     if backend == "codex":
         if args.auth_file is None or not args.auth_file.is_file():
             error("Codex run requires an existing --auth-file")
@@ -120,6 +127,26 @@ def prepare_backend(
             image=provenance["container_image_id"],
             auto_compact_window=args.compact_window,
             max_output_tokens=args.max_output_tokens,
+        )
+
+    return factory, provenance
+
+
+def _prepare_omlx(
+    args: argparse.Namespace, error: Callable[[str], Any]
+) -> tuple[Callable[..., Any], dict[str, Any]]:
+    """Claude Code on this machine with oMLX as its model; no Docker, no OAuth."""
+    from vista.backends.omlx import create_backend
+    from vista.backends.omlx.runner import prepare
+
+    options, provenance = prepare(args, error)
+
+    def factory(runtime, directory):
+        return create_backend(
+            runtime,
+            directory=directory,
+            options=options,
+            task_timeout=args.task_timeout,
         )
 
     return factory, provenance

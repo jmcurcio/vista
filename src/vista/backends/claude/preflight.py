@@ -47,6 +47,7 @@ def run_runtime_preflight(
     provider_credential: str | None = None,
     provider_base_url: str | None = None,
     max_output_tokens: int | None = None,
+    runner_class: type[ClaudeCodeRunner] = ClaudeCodeRunner,
 ) -> tuple[ClaudeResult, str]:
     tools = replace(
         tool_interface,
@@ -54,7 +55,7 @@ def run_runtime_preflight(
         acknowledge=lambda call_id: None,
         predict_images=lambda name, arguments: 0,
     )
-    runner = ClaudeCodeRunner(
+    runner = runner_class(
         visible_dir=visible_dir,
         claude_config_dir=config_dir,
         io_dir=io_dir,
@@ -83,6 +84,7 @@ def run_runtime_preflight(
         result.init_envelope,
         display_size=runner.display_size,
         tool_definitions=list(tools.definitions),
+        expected_version=runner.claude_version_pin,
     )
     concrete_model_id = resolved_model_id(result)
     if result.final_message.strip() != "READY":

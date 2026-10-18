@@ -198,7 +198,10 @@ def run_game(
     credential_lease: ClaudeCredentialLease | None = None,
     run_dir: Path | None = None,
     environment_factory: Any | None = None,
+    runner_factory: Callable[..., ClaudeCodeRunner] | None = None,
 ) -> GameRunOutcome:
+    """`runner_factory` replaces the pinned Claude runtime; it owns its own
+    binary and checks (the oMLX backend passes one)."""
     if (shared_arc is None) != (shared_scorecard_id is None):
         raise ValueError("shared_arc and shared_scorecard_id must be provided together")
     if preflight_model_id is not None and shared_arc is None:
@@ -253,10 +256,13 @@ def run_game(
     failure: BaseException | None = None
 
     try:
-        claude_bin = validate_claude_runtime(
-            default_claude_bin(),
-            oauth_token=oauth_token,
-        )
+        if runner_factory is None:
+            claude_bin = validate_claude_runtime(
+                default_claude_bin(),
+                oauth_token=oauth_token,
+            )
+        else:
+            claude_bin = None
         if preflight_model_id is None:
             _, concrete_model_id = run_runtime_preflight(
                 visible_dir=visible_dir,
@@ -267,6 +273,7 @@ def run_game(
                 effort=args.effort,
                 timeout=args.timeout,
                 oauth_token=oauth_token,
+                runner_factory=runner_factory or ClaudeCodeRunner,
             )
         else:
             concrete_model_id = preflight_model_id
@@ -329,7 +336,7 @@ def run_game(
             interface_name="native-mcp-tool-loop",
         )
         maximum_calls = args.max_steps * (args.max_invalid_retries + 1) + 1
-        runner = ClaudeCodeRunner(
+        runner = (runner_factory or ClaudeCodeRunner)(
             visible_dir=visible_dir,
             claude_config_dir=config_dir,
             io_dir=io_dir,
@@ -449,8 +456,9 @@ def run_runtime_preflight(
     timeout: int,
     oauth_token: str | None = None,
     rate_limit_observer: Callable[[ClaudeRateLimitEvent], None] | None = None,
+    runner_factory: Callable[..., ClaudeCodeRunner] = ClaudeCodeRunner,
 ) -> tuple[ClaudeResult, str]:
-    runner = ClaudeCodeRunner(
+    runner = runner_factory(
         visible_dir=visible_dir,
         claude_config_dir=config_dir,
         io_dir=io_dir,
@@ -468,7 +476,11 @@ def run_runtime_preflight(
         raise RuntimeError(
             f"Claude runtime preflight failed; stderr: {result.stderr_path}"
         )
-    validate_instruction_envelope(result.init_envelope, display_size=DISPLAY_SIZE)
+    validate_instruction_envelope(
+        result.init_envelope,
+        display_size=DISPLAY_SIZE,
+        expected_version=runner.claude_version_pin,
+    )
     concrete_model_id = resolved_model_id(result)
     if result.final_message.strip() != "READY":
         raise RuntimeError("Claude runtime preflight returned an unexpected result.")
