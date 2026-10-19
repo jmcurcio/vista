@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import random
 import subprocess
@@ -210,3 +211,9 @@ def decide(
         "attempts": attempts,
         "latency_seconds": time.monotonic() - started,
     }
+
+
+def entropy_confidence(probabilities: list[float]) -> float:
+    """1 minus normalized entropy, the confidence LocalJev reports."""
+    entropy = -sum(p * math.log(p) for p in probabilities if p > 0)
+    return max(0.0, 1 - entropy / math.log(len(probabilities)))

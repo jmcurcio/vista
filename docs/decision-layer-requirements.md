@@ -292,6 +292,28 @@ before submission.
     - *final* when K or fewer tool calls remain: commit to the leading option.
   - **Relaxation.** τ and σ relax linearly toward a floor of 0.5 as the task's tool
     budget is spent.
+  - **Commit guard (`cadence-policy-v2`).** A decision that would advise *commit*
+    while any finding is flagged for verdict words is downgraded to *restate*. The
+    agent is told which findings and words, and asked to restate them as plain
+    observations.
+  - **Consistency.** Each decision is asked `--decider-orderings` times (default 3),
+    and the answers are averaged.
+    - Between askings, only the order of the findings changes (each option's
+      findings first in turn). The labels, the options and their listed order
+      stay fixed.
+    - Confidence is recomputed from the averaged probabilities on LocalJev's
+      entropy scale, and sufficiency is the mean. Every sample is logged.
+    - The design is the result of two failed alternatives, found while replaying
+      recorded decisions on 2026-10-18:
+      1. **Reordering the listed options** produced spurious disagreement.
+         LocalJev's model reports probabilities in label order whatever the
+         listing order, so answers were read against the wrong options.
+      2. **Reassigning options to labels** contradicted tasks whose option names
+         carry meaning: BabyVision's "patterns numbered 1, 2, 3 left to right".
+         The decider then hedged uniformly even on clear evidence.
+
+      Findings-order rotation has neither problem. Clear evidence stays
+      unanimous at confidence 1.0, and noisy evidence loses confidence.
   - **Logging.** The verdict, the advice, the effective thresholds and the budget
     state are logged with every decision.
   - **Pre-registration.** K, τ and σ are experiment parameters. They must be tuned
@@ -535,7 +557,7 @@ These isolate the decider from the harness:
 | R1, R2 (client, providers) | **Done**: `src/vista/decide/client.py`. Providers: `localjev`, `jev` (needs `--decider-url` and `JEV_API_KEY`; not yet run live), `random`, `unavailable`. The readiness check records the LocalJev checkout, upstream model and oMLX settings. |
 | R3 (options) | **Partial.** Public task choices (BabyVision) and options supplied by the agent are implemented. Enumerating options from action tool schemas, and validating that agent options are legal actions, are **not** implemented; R3.2 matters only for the fast path (R6.2). |
 | R4, R5 (evidence, tool) | **Done**, with prompt `decide-v3`: only structured findings reach the decider, and cross-option references are refused; `hypothesis` and `leaning` are logged, never sent (R4.1a); BabyVision sends its bare question. Code: `src/vista/decide/integration.py`. `DecidingSession` (general path) and `DecisionGate` (also answers `decide` on the ARC path). Hooks: `backends/binding.py` (gate) and the `run.py`/`cli.py` of each benchmark; ARC in `benchmarks/arc3/omlx/harness.py`. |
-| R6.1 adviser, R6.4 cadence | **Implemented.** Verified in-process with the random provider and live LocalJev decisions. **No complete benchmark run yet.** |
+| R6.1 adviser, R6.4 cadence | **Implemented**, with `cadence-policy-v2` (commit guard) and 3 findings orderings averaged per decision. A replay of the recorded `decide-cadence-v3` run on 457 shows the wrong confidence-1.0 commit becoming *restate*. Verified in-process with the random provider and live LocalJev decisions. **No complete benchmark run yet.** |
 | R6.2 fast path | Not started. |
 | R7 (provenance) | Decisions and gate refusals are logged per event. The decider configuration is in the experiment manifest and changes the experiment identity. The oMLX backend is committed (`omlx-backend`); the decision layer is **not yet committed**. |
 | R8, R9.2 (accounting, analysis scripts) | Not started. Per-task decider summaries (calls, failures, refusals, latency, tokens) are written to `result.json`. |

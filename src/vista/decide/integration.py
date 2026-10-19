@@ -44,7 +44,14 @@ from vista.core.contracts import (
 from vista.core.json import canonical, thaw
 from vista.core.profiles import AgentProfile, Experiment
 
-from .client import PROVIDERS, DeciderError, DeciderProvider, decide, ready
+from .client import (
+    PROVIDERS,
+    DeciderError,
+    DeciderProvider,
+    decide,
+    entropy_confidence,
+    ready,
+)
 
 # One paragraph, in the register of the paper's Appendix A.5 prompts.
 DECIDE_METHOD = (
@@ -110,11 +117,17 @@ class Cadence:
     floor: float = 0.5
 
 
+# Cadence advice rule version: v2 adds the commit guard on flagged findings.
+POLICY_VERSION = "cadence-policy-v2"
+
+
 @dataclass(frozen=True)
 class Decider:
     provider: DeciderProvider
     decisions: int | None = None
     cadence: Cadence | None = None
+    # Findings orders averaged per decision (1 = one call).
+    orderings: int = 3
 
     @property
     def mode(self) -> str:
@@ -125,6 +138,8 @@ class Decider:
             **self.provider.manifest(),
             "mode": self.mode,
             "cadence": asdict(self.cadence) if self.cadence else None,
+            "policy_version": POLICY_VERSION if self.cadence else None,
+            "orderings": self.orderings,
             "decisions_budget": self.decisions,
             "prompt_version": PROMPT_VERSIONS[self.mode],
             "sufficiency_question": SUFFICIENCY_QUESTION if self.cadence else None,
@@ -299,23 +314,9 @@ class DecisionLayer:
             entry["findings"], entry["flags"] = self._check(
                 arguments["findings"], options
             )
-            entry["state"] = "\n".join(
-                [
-                    f"Task:\n{self.objective}",
-                    "",
-                    "Findings reported by the agent, one fact per line:",
-                    *(
-                        f"- {'task' if f['subject'] == 'task' else 'option ' + f['subject']}: {f['fact']}"
-                        for f in entry["findings"]
-                    ),
-                ]
-            )
-            decision = decide(
-                self.decider.provider,
-                state=entry["state"],
-                instructions=arguments["question"],
-                options=options,
-                sufficiency=SUFFICIENCY_QUESTION if self.decider.cadence else None,
+            entry["state"] = self._state(entry["findings"], list(options))
+            decision = self._consistent(
+                arguments["question"], options, entry["findings"]
             )
         except DeciderError as exc:
             self.summary["failures"] += 1
@@ -330,10 +331,83 @@ class DecisionLayer:
         }
         if self.decider.cadence:
             reply["sufficient"] = decision["sufficient"]
-            entry["policy"] = self.advise(decision)
+            entry["policy"] = self.advise(decision, entry["flags"])
             reply["advice"] = entry["policy"]["advice"]
         self.record("decision", {**entry, "outcome": "returned", **decision})
         return True, canonical(reply)
+
+    def _state(
+        self, findings: list[dict[str, str]], options: list[str], shift: int = 0
+    ) -> str:
+        """Task first, then each option's findings, options in rotated order."""
+        order = options[shift:] + options[:shift]
+        rank = {"task": -1, **{label: i for i, label in enumerate(order)}}
+        lines = [
+            f"- {'task' if f['subject'] == 'task' else 'option ' + f['subject']}: "
+            f"{f['fact']}"
+            for f in sorted(findings, key=lambda f: rank[f["subject"]])
+        ]
+        return "\n".join(
+            [
+                f"Task:\n{self.objective}",
+                "",
+                "Findings reported by the agent, one fact per line:",
+                *lines,
+            ]
+        )
+
+    def _consistent(
+        self, question: str, options: dict[str, str], findings: list[dict[str, str]]
+    ) -> dict[str, Any]:
+        """The decision asked with each option's findings presented first.
+
+        Labels, options and their order never change, so nothing presented
+        contradicts the task (the decider reports in label order, and option
+        names may have their own meaning, like BabyVision's pattern numbers).
+        Only the order of the findings rotates, which a sound decision should
+        not depend on. Answers are averaged: a decision that follows the
+        presentation rather than the evidence loses confidence. Confidence is
+        recomputed from the average on LocalJev's entropy scale; sufficiency
+        is the mean.
+        """
+        labels = list(options)
+        samples = []
+        for shift in range(min(self.decider.orderings, len(labels))):
+            answer = decide(
+                self.decider.provider,
+                state=self._state(findings, labels, shift),
+                instructions=question,
+                options=options,
+                sufficiency=SUFFICIENCY_QUESTION if self.decider.cadence else None,
+            )
+            samples.append({"shift": shift, **answer})
+        probabilities = {
+            label: sum(s["probabilities"][label] for s in samples) / len(samples)
+            for label in labels
+        }
+        return {
+            # Ties go to the task's own order.
+            "choice": max(
+                labels, key=lambda label: (probabilities[label], -labels.index(label))
+            ),
+            "probabilities": probabilities,
+            "confidence": entropy_confidence(list(probabilities.values())),
+            "sufficient": None
+            if not self.decider.cadence
+            else sum(s["sufficient"] for s in samples) / len(samples),
+            "model": samples[0]["model"],
+            "usage": {
+                key: sum(int(s["usage"].get(key, 0)) for s in samples)
+                for key in ("input_tokens", "output_tokens")
+            },
+            "attempts": sum(s["attempts"] for s in samples),
+            "latency_seconds": sum(s["latency_seconds"] for s in samples),
+            "orderings": len(samples),
+            "samples": [
+                {k: s[k] for k in ("shift", "choice", "probabilities", "sufficient")}
+                for s in samples
+            ],
+        }
 
     @staticmethod
     def _check(
@@ -369,7 +443,9 @@ class DecisionLayer:
         ordered = sorted(findings, key=lambda f: order[f["subject"]])
         return ordered, flags
 
-    def advise(self, decision: dict[str, Any]) -> dict[str, Any]:
+    def advise(
+        self, decision: dict[str, Any], flags: list[dict[str, Any]] = ()
+    ) -> dict[str, Any]:
         cadence = self.decider.cadence
         assert cadence is not None
         spent = self.budget()
@@ -390,6 +466,18 @@ class DecisionLayer:
             verdict = "final"
             advice = (
                 f"Final decision: the tool budget is nearly spent. Commit to {top} now."
+            )
+        elif (
+            decision["confidence"] >= tau and decision["sufficient"] >= sigma and flags
+        ):
+            # A commit resting on judgements is not a commit on evidence.
+            verdict = "restate"
+            listed = "; ".join(
+                f"finding {f['finding']} ({', '.join(f['words'])})" for f in flags
+            )
+            advice = (
+                f"Leaning {top}, but some findings carry judgements: {listed}. "
+                "Restate them as plain observations, then decide again."
             )
         elif decision["confidence"] >= tau and decision["sufficient"] >= sigma:
             verdict = "commit"
@@ -601,6 +689,12 @@ def add_arguments(parser: Any) -> None:
         help="Cadence mode: require decide after every N evidence or action calls",
     )
     group.add_argument(
+        "--decider-orderings",
+        type=int,
+        default=3,
+        help="Findings orders averaged per decision (default 3; 1 = one call)",
+    )
+    group.add_argument(
         "--commit-confidence", type=float, default=Cadence.commit_confidence
     )
     group.add_argument(
@@ -624,6 +718,8 @@ def resolve(args: Any, error: Any) -> Decider | None:
     load_dotenv(os.getenv("ARC3_ENV_FILE", ".env"))
     if args.decisions is not None and args.decisions < 1:
         error("--decisions must be positive")
+    if args.decider_orderings < 1:
+        error("--decider-orderings must be positive")
     cadence = None
     if args.decide_every is not None:
         if args.decide_every < 1:
@@ -646,4 +742,4 @@ def resolve(args: Any, error: Any) -> Decider | None:
         provider = ready(provider)
     except (DeciderError, OSError) as exc:
         error(f"The {provider.name} decision layer is not ready: {exc}")
-    return Decider(provider, args.decisions, cadence)
+    return Decider(provider, args.decisions, cadence, args.decider_orderings)
