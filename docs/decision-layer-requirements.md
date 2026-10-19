@@ -295,9 +295,18 @@ before submission.
   - **Logging.** The verdict, the advice, the effective thresholds and the budget
     state are logged with every decision.
   - **Pre-registration.** K, τ and σ are experiment parameters. They must be tuned
-    on a development set disjoint from the evaluation set: for BabyVision, the 349
-    questions outside the paper's 39. They are then fixed in pre-registration
-    (§5.4).
+    on a development set disjoint from the evaluation set, then fixed in
+    pre-registration (§5.4).
+    - **BabyVision development set:** the 44 Visual Tracking questions outside
+      the paper's 39 (Lines Observation 9, Metro map 12, Recognize numbers and
+      letters 23). These are the same task type, disjoint by construction.
+      Select them with `--task-set visual-tracking --subtype "Lines Observation"
+      --subtype "Metro map" --subtype "Recognize numbers and letters"`.
+    - **Confidence scale.** `confidence` is 1 minus normalized entropy, not the
+      top probability. With three options, a top probability of 0.8 gives about
+      0.42, so τ must be tuned on this scale.
+    - Smoke runs on question 457 (2D Pattern Completion) are outside both sets.
+      They count as development data and are never reported as results.
   - **Random control.** The random control (N1) under the cadence has uniform
     probabilities and sufficiency 0.5, so it never triggers *commit* before the
     budget-relaxed thresholds reach the floor. It isolates the effect of forced
