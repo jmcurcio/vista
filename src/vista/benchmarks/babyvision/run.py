@@ -14,6 +14,7 @@ from vista.core.artifacts import ArtifactStore
 from vista.core.json import canonical
 from vista.core.profiles import Phase
 from vista.core.runtime import BudgetExhausted, TaskRuntime
+from vista.decide.integration import Decider, attach, enable
 
 from .dataset import Question, question_observation
 from .official import extract_boxed_answer
@@ -56,6 +57,7 @@ def run_task(
     backend_segments: int | None = None,
     tool_calls: int | None = None,
     transport_provenance: dict[str, Any] | None = None,
+    decider: Decider | None = None,
 ) -> dict[str, Any]:
     if type(pass_number) is not int or pass_number < 1:
         raise ValueError("pass_number must be a positive integer")
@@ -85,6 +87,7 @@ def run_task(
             "effort": effort,
             "transport": transport_provenance
             or {"validation": "caller-supplied-backend"},
+            "decider": decider.manifest() if decider is not None else None,
             "source_files": source_fingerprint(),
             "dependencies": {
                 name: importlib.metadata.version(name) for name in ("Pillow", "regex")
@@ -96,6 +99,7 @@ def run_task(
     backend_session = None
     error = None
     result: dict[str, Any] = {}
+    decider_summary = None
     started = time.monotonic()
     try:
         session = BabyVisionSession(question, observation=observation)
@@ -113,7 +117,19 @@ def run_task(
             backend_segments=backend_segments,
             tool_calls=tool_calls,
         )
+        # The public choices, lettered as the question presents them.
+        session, experiment = enable(
+            session,
+            experiment,
+            decider,
+            options={chr(65 + i): text for i, text in enumerate(question.options)}
+            or None,
+            # The bare question: the choices travel as options, and the answer
+            # format instruction is for the agent only.
+            objective=question.question,
+        )
         runtime = TaskRuntime(session, experiment, artifact_dir=root / "artifacts")
+        decider_summary = attach(session, runtime)
         backend_session = backend_factory(runtime, root / "transport")
         answer_loop(session, runtime, backend_session)
         result = session.result()
@@ -165,6 +181,7 @@ def run_task(
             if backend_session is not None
             else [],
             "elapsed_seconds": time.monotonic() - started,
+            "decider": decider_summary,
         }
     )
     path = root / "result.json"

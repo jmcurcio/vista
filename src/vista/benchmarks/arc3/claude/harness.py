@@ -479,6 +479,9 @@ def run_runtime_preflight(
     validate_instruction_envelope(
         result.init_envelope,
         display_size=DISPLAY_SIZE,
+        # The runner's own tool surface: the default for ARC's runner, more
+        # for one that adds tools (the omlx decision layer).
+        tool_definitions=list(runner._mcp_tool_definitions()),
         expected_version=runner.claude_version_pin,
     )
     concrete_model_id = resolved_model_id(result)

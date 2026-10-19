@@ -17,6 +17,7 @@ from vista.core.contracts import ObservationBundle
 from vista.core.json import canonical
 from vista.core.profiles import Phase
 from vista.core.runtime import BudgetExhausted, TaskRuntime
+from vista.decide.integration import Decider, attach, enable
 
 from .environment import (
     MAX_DECISIONS,
@@ -154,7 +155,9 @@ def run_task(
     transport_provenance: dict[str, Any] | None = None,
     browser_factory: Callable[..., GameStoreRuntime] | None = None,
     human_median_loader: Callable[[str], float] = load_human_median,
+    decider: Decider | None = None,
 ) -> dict[str, Any]:
+    decider_summary = None
     if type(repeat) is not int or repeat < 1:
         raise ValueError("repeat must be a positive integer")
     source = "local" if games_root else "live"
@@ -224,7 +227,9 @@ def run_task(
             backend_segments=backend_segments,
             tool_calls=tool_calls,
         )
-        runtime = TaskRuntime(session, experiment, artifact_dir=root / "artifacts")
+        player, experiment = enable(session, experiment, decider)
+        runtime = TaskRuntime(player, experiment, artifact_dir=root / "artifacts")
+        decider_summary = attach(player, runtime)
         backend_session = backend_factory(runtime, root / "transport")
         play_loop(session, runtime, backend_session)
         result = session.result()
@@ -295,6 +300,7 @@ def run_task(
             "backend_usage": backend_session.usage_reports
             if backend_session is not None
             else [],
+            "decider": decider_summary,
             "elapsed_seconds": time.monotonic() - started,
         }
     )

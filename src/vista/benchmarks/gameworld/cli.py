@@ -14,6 +14,11 @@ from vista.backends.launch import (
     validate_backend_arguments,
 )
 from vista.core.json import thaw
+from vista.decide.integration import (
+    add_arguments as add_decider_arguments,
+    resolve as resolve_decider,
+    with_decider,
+)
 
 from .preflight import check_transport
 from .profiles import action_specs, make_experiment, make_profile
@@ -29,6 +34,7 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--game")
     root.add_argument("--task")
     add_backend_arguments(root, backends=("codex", "omlx"))
+    add_decider_arguments(root)
     root.add_argument("--model")
     root.add_argument("--effort")
     root.add_argument("--output", type=Path)
@@ -58,6 +64,7 @@ def main(argv: list[str] | None = None) -> int:
     ):
         cli.error("Runtime budgets and timeouts must be positive")
     validate_backend_arguments(args, cli.error)
+    decider = resolve_decider(args, cli.error)
     transport = transport_for(args.backend) if args.backend else None
     upstream = load_upstream(args.gameworld_root)
     games_root = args.games_root.expanduser().resolve(strict=True)
@@ -93,6 +100,8 @@ def main(argv: list[str] | None = None) -> int:
                 backend_segments=args.backend_segments,
                 tool_calls=args.tool_calls,
             )
+            if decider is not None:
+                experiment = with_decider(experiment, decider)
             roles.append(
                 {
                     **experiment.manifest(),
@@ -148,6 +157,7 @@ def main(argv: list[str] | None = None) -> int:
             backend_segments=args.backend_segments,
             tool_calls=args.tool_calls,
             transport_provenance=provenance,
+            decider=decider,
         )
         results.append(result)
         print(
