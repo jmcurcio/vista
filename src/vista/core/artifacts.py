@@ -17,7 +17,6 @@ class ArtifactStore:
         self.root.mkdir(mode=0o700, parents=True, exist_ok=False)
         self.root.chmod(0o700)
         self._lock = threading.Lock()
-        (self.root / "evidence").mkdir(mode=0o700)
 
     def manifest(self, value: dict[str, Any]) -> None:
         with (self.root / "manifest.json").open("x", encoding="utf-8") as stream:
@@ -36,6 +35,9 @@ class ArtifactStore:
             for visual in observation.views:
                 digest = hashlib.sha256(visual.data).hexdigest()
                 path = self.root / "evidence" / digest
+                # Created with the first image, so a store that archives
+                # none (the task-level record) leaves no empty directory.
+                path.parent.mkdir(mode=0o700, exist_ok=True)
                 try:
                     with path.open("xb") as stream:
                         stream.write(visual.data)

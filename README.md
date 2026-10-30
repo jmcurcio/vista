@@ -92,6 +92,45 @@ docker build -t arc3-codex-player:0.1 -f Dockerfile.codex-player .
 docker build -t arc3-claude-player:0.1 -f Dockerfile.claude-player .
 ```
 
+### Local models with oMLX (macOS)
+
+The `omlx` backend runs Claude Code as a host process (no Docker) and sends its
+requests to a local oMLX server's
+Anthropic-compatible API. The prompts, tools and lifecycle are the Claude
+backend's. It needs Python 3.12 via `uv`, Claude Code on `PATH`, and a
+running oMLX server. Set the model's oMLX context window to at least 48K,
+because Claude Code needs it.
+
+```bash
+uv sync --all-extras
+echo "OMLX_API_KEY=<oMLX auth.api_key>" >> .env   # from ~/.omlx/settings.json
+
+# One BabyVision question
+BABYVISION_ROOT=$PWD/local/BabyVision uv run vista --profile babyvision \
+  --backend omlx run --task-id 666 --model Qwen3.8-27B-MLX-oQ4e-mtp \
+  --effort medium --context-window 65536 --output runs/omlx-bv666
+
+# One ARC-AGI-3 game
+uv run vista --profile arc3 --backend omlx --game-id s5i5 \
+  --operation-mode online --model Qwen3.8-27B-MLX-oQ4e-mtp \
+  --effort medium --context-window 65536 --max-steps 200
+```
+
+`--context-window` must equal the model's oMLX `max_context_window`. It
+bounds Claude Code's context accounting and auto-compaction. Claude Code is
+pinned to whichever version is installed when a run starts, and that version is
+recorded in each run's provenance.
+
+Runs take hours. Each run holds a `caffeinate` sleep assertion, but closing the
+lid on battery still forces sleep, which stops the oMLX server and ends the run.
+Keep the Mac on AC power with the lid open.
+
+Each tool call waits while macOS reports the `serious` thermal state or above
+(`--thermal-pause-at`), and `--cooldown SECONDS` adds idle time before every
+call. Waits are logged to `transport/io/thermal.jsonl`. Each run's provenance
+records the oMLX version, server settings and model settings (thinking budget,
+sampling, MTP) as they were at the start, without credentials.
+
 ## Run
 
 ### ARC-AGI-3

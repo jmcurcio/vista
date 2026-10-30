@@ -15,6 +15,11 @@ from vista.backends.launch import (
     validate_backend_arguments,
 )
 from vista.backends.preflight import check_transport
+from vista.decide.integration import (
+    add_arguments as add_decider_arguments,
+    resolve as resolve_decider,
+    with_decider,
+)
 
 from .dataset import (
     BABYVISION_REVISION,
@@ -61,7 +66,8 @@ def parser() -> argparse.ArgumentParser:
         help="tracking48 (default): Maze, Connect the lines, Lines Observation; "
         "visual-tracking: the whole type (83); full: all 388",
     )
-    add_backend_arguments(root, backends=("codex",))
+    add_backend_arguments(root, backends=("codex", "omlx"))
+    add_decider_arguments(root)
     root.add_argument("--model")
     root.add_argument("--effort")
     root.add_argument("--passes", type=int, default=1, help="Answers per question")
@@ -244,6 +250,7 @@ def main(argv: list[str] | None = None) -> int:
     ):
         cli.error("Passes, runtime budgets and timeouts must be positive")
     validate_backend_arguments(args, cli.error)
+    decider = resolve_decider(args, cli.error)
     transport = transport_for(args.backend)
     plans: list[dict[str, Any]] = []
     for question in questions:
@@ -259,6 +266,8 @@ def main(argv: list[str] | None = None) -> int:
             backend_segments=args.backend_segments,
             tool_calls=args.tool_calls,
         )
+        if decider is not None:
+            experiment = with_decider(experiment, decider)
         for number in range(1, args.passes + 1):
             plans.append(
                 {
@@ -299,6 +308,7 @@ def main(argv: list[str] | None = None) -> int:
             backend_segments=args.backend_segments,
             tool_calls=args.tool_calls,
             transport_provenance=provenance,
+            decider=decider,
         )
         results.append(result)
         print(

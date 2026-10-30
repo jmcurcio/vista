@@ -48,11 +48,13 @@ def validate_instruction_envelope(
     display_size: int,
     allow_slash_commands: bool = False,
     tool_definitions: list[dict[str, Any]] | None = None,
+    expected_version: str = _runner.PINNED_CLAUDE_VERSION,
 ) -> None:
     _runner.validate_instruction_envelope(
         envelope,
         display_size=display_size,
         allow_slash_commands=allow_slash_commands,
+        expected_version=expected_version,
         tool_definitions=tool_definitions
         if tool_definitions is not None
         else build_tools(display_size, include_compact_checkpoint=False),

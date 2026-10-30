@@ -17,13 +17,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         choices=("arc3", "gameworld", "aigamestore", "babyvision"),
         required=True,
     )
-    parser.add_argument("--backend", choices=("codex", "claude"), required=True)
+    parser.add_argument("--backend", choices=("codex", "claude", "omlx"), required=True)
     if not arguments or arguments in (["--help"], ["-h"]):
         parser.print_help()
         return 0
     selection, remaining = parser.parse_known_args(arguments)
-    if selection.profile != "arc3" and selection.backend != "codex":
-        parser.error(f"--profile {selection.profile} requires --backend codex")
+    if selection.profile != "arc3" and selection.backend == "claude":
+        parser.error(f"--profile {selection.profile} requires --backend codex or omlx")
     if remaining[:1] == ["--"]:
         remaining = remaining[1:]
     if selection.profile == "arc3":

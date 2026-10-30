@@ -15,6 +15,7 @@ from vista.core.contracts import ObservationBundle
 from vista.core.json import canonical
 from vista.core.profiles import Phase
 from vista.core.runtime import BudgetExhausted, TaskRuntime
+from vista.decide.integration import Decider, attach, enable
 
 from .engine import GameWorldEngine, artifact_value
 from .preflight import source_fingerprint
@@ -111,8 +112,10 @@ def run_task(
     backend_segments: int | None = None,
     tool_calls: int | None = None,
     transport_provenance: dict[str, Any] | None = None,
+    decider: Decider | None = None,
 ) -> dict[str, Any]:
     protocol = COMPUTER_USE_PROTOCOL
+    decider_summaries: list[dict[str, Any] | None] = []
     root = directory.resolve()
     artifacts = ArtifactStore(root)
     artifacts.manifest(
@@ -180,9 +183,11 @@ def run_task(
                 backend_segments=backend_segments,
                 tool_calls=tool_calls,
             )
+            player, experiment = enable(session, experiment, decider)
             runtime = TaskRuntime(
-                session, experiment, artifact_dir=root / f"role-{index}" / "artifacts"
+                player, experiment, artifact_dir=root / f"role-{index}" / "artifacts"
             )
+            decider_summaries.append(attach(player, runtime))
             runtimes.append(runtime)
             backends.append(
                 backend_factory(runtime, root / f"role-{index}" / "transport")
@@ -238,6 +243,7 @@ def run_task(
             "role_usage": [runtime.usage for runtime in runtimes],
             "role_checkpoints": [runtime.context.checkpoints for runtime in runtimes],
             "role_backend_usage": [backend.usage_reports for backend in backends],
+            "role_deciders": decider_summaries,
             "elapsed_seconds": time.monotonic() - started,
         }
     )

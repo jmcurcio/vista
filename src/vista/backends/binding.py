@@ -29,6 +29,9 @@ def tool_interface(runtime: TaskRuntime, kind: str) -> ToolInterface:
         checkpoint_via_working=kind == "claude",
         delegate=runtime,
     )
+    # A deciding session may gate tool calls (the decision cadence).
+    gate = getattr(runtime.session, "gate", None)
+    executor = gate(dispatcher) if callable(gate) else dispatcher
 
     def predict_images(name: str, arguments: object) -> int:
         spec = runtime.spec(name)
@@ -44,7 +47,7 @@ def tool_interface(runtime: TaskRuntime, kind: str) -> ToolInterface:
 
     return ToolInterface(
         tuple(runtime.tools()),
-        dispatcher,
+        executor,
         frozenset(spec.name for spec in runtime.specs if spec.requires_ack),
         frozenset(
             spec.name

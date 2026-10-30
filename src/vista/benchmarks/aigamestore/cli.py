@@ -15,6 +15,11 @@ from vista.backends.launch import (
 )
 from vista.backends.preflight import check_transport
 from vista.core.json import thaw
+from vista.decide.integration import (
+    add_arguments as add_decider_arguments,
+    resolve as resolve_decider,
+    with_decider,
+)
 
 from .environment import MAX_DECISIONS, PUBLIC_GAMES, PublicGame, load_public_game
 from .profiles import action_specs, make_experiment, make_profile
@@ -35,7 +40,8 @@ def parser() -> argparse.ArgumentParser:
         type=Path,
         help="Serve local game copies (gameN/index.html) instead of aigamestore.org",
     )
-    add_backend_arguments(root, backends=("codex",))
+    add_backend_arguments(root, backends=("codex", "omlx"))
+    add_decider_arguments(root)
     root.add_argument("--model")
     root.add_argument("--effort")
     root.add_argument("--max-decisions", type=int, default=MAX_DECISIONS)
@@ -80,6 +86,7 @@ def main(argv: list[str] | None = None) -> int:
     ):
         cli.error("Repeats, runtime budgets and timeouts must be positive")
     validate_backend_arguments(args, cli.error)
+    decider = resolve_decider(args, cli.error)
     transport = transport_for(args.backend) if args.backend else None
     if args.games_root is not None and not args.games_root.is_dir():
         cli.error("--games-root must be an existing directory")
@@ -107,6 +114,8 @@ def main(argv: list[str] | None = None) -> int:
             backend_segments=args.backend_segments,
             tool_calls=args.tool_calls,
         )
+        if decider is not None:
+            experiment = with_decider(experiment, decider)
         for repeat in range(1, args.repeats + 1):
             plans.append(
                 {
@@ -151,6 +160,7 @@ def main(argv: list[str] | None = None) -> int:
             backend_segments=args.backend_segments,
             tool_calls=args.tool_calls,
             transport_provenance=provenance,
+            decider=decider,
         )
         results.append(result)
         print(
